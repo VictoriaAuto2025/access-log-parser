@@ -12,3 +12,5 @@ public class Main {
         System.out.println(("Частное: ") + (double)firstnumber/secondNumber);
     }
 }
+
+
