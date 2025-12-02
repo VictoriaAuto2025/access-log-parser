@@ -80,7 +80,7 @@ public class Statistics {
         Set<String> pages = stats.getPages();
         System.out.println("Количество: " + pages.size());
         System.out.println("Примеры:");
-        pages.stream().limit(5).forEach(System.out::println); // первые 5 для примера
+        pages.stream().limit(5).forEach(System.out::println);
         System.out.println("\n=== Статистика по ОС ===");
         Map<String, Double> osStats = stats.getOsStatistics();
         osStats.forEach((os, share) ->
