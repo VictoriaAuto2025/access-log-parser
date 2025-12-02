@@ -6,7 +6,6 @@ import java.nio.file.Paths;
 
 public class JavaCourse {
     public static void main(String[] args) {
-
         String path = "C:/Users/vboldyreva/Desktop/AccessLogParser/src/access.log";
         try {
             Path filePath = Paths.get(path);
