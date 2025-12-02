@@ -10,7 +10,7 @@ import java.net.URL;
 import java.io.InputStream;
 public class JavaCourse {
     public static void main(String[] args) {
-        // Указываем путь к файлу — как требуется в задании
+
         String path = "C:/Users/vboldyreva/Desktop/AccessLogParser/src/access.log"; // ← файл должен лежать здесь
         try {
             Path filePath = Paths.get(path);
