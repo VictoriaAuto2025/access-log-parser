@@ -5,8 +5,10 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 public class JavaCourse {
+
     public static void main(String[] args) {
         String path = "C:/Users/vboldyreva/Desktop/AccessLogParser/src/access.log";
+
         try {
             Path filePath = Paths.get(path);
             if (!Files.exists(filePath)) {
@@ -17,6 +19,7 @@ public class JavaCourse {
                 System.err.println("Указанный путь ведёт не к файлу: " + path);
                 return;
             }
+
             try {
                 FileReader fileReader = new FileReader(filePath.toFile());
                 BufferedReader reader = new BufferedReader(fileReader);
