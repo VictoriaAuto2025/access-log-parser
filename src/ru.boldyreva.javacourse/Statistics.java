@@ -16,30 +16,24 @@ public class Statistics {
     }
     private boolean parseLine(String line) {
         try {
-
             int q1 = line.indexOf('"');
             if (q1 == -1) return false;
-
             if (!line.startsWith("GET ", q1 + 1) &&
                     !line.startsWith("POST ", q1 + 1) &&
                     !line.startsWith("HEAD ", q1 + 1)) {
                 return false;
             }
-
             int q2 = line.indexOf('"', q1 + 1);
             if (q2 == -1) return false;
             String request = line.substring(q1 + 1, q2); // "GET /page HTTP/1.1"
-
             int space1 = request.indexOf(' ');
             if (space1 == -1) return false;
             int space2 = request.indexOf(' ', space1 + 1);
             if (space2 == -1) return false;
             String page = request.substring(space1 + 1, space2);
-
             String afterQ2 = line.substring(q2 + 1).trim();
             String statusCode = afterQ2.split("\\s+")[0];
             if (!"200".equals(statusCode)) return false;
-
             int lastQ = line.lastIndexOf('"');
             int prevQ = line.lastIndexOf('"', lastQ - 1);
             if (prevQ == -1) return false;
@@ -65,7 +59,6 @@ public class Statistics {
         if (lowerUa.contains("linux")) return "Linux";
         if (lowerUa.contains("android")) return "Android";
         if (lowerUa.contains("iphone") || lowerUa.contains("ipad")) return "iOS";
-
         if (lowerUa.contains("ubuntu")) return "Linux";
         if (lowerUa.contains("centos")) return "Linux";
         if (lowerUa.contains("fedora")) return "Linux";
@@ -74,7 +67,6 @@ public class Statistics {
 
         return "Unknown";
     }
-
     public Set<String> getPages() {
         return new HashSet<>(pages);
     }
@@ -88,7 +80,6 @@ public class Statistics {
         }
         return result;
     }
-
     public static void main(String[] args) {
         Statistics stats = new Statistics("C:/Users/vboldyreva/Desktop/AccessLogParser/src/access.log");
 
