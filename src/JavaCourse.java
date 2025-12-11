@@ -1,62 +1,90 @@
-import java.io.BufferedReader;
-import java.io.FileReader;
+import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
 public class JavaCourse {
 
-    public static void main(String[] args) {
-        String path = "C:/Users/vboldyreva/Desktop/AccessLogParser/src/access.log";
+        public static void main(String[] args) {
 
-        try {
-            Path filePath = Paths.get(path);
-            if (!Files.exists(filePath)) {
-                System.err.println("Файл не существует: " + path);
-                return;
-            }
-            if (!Files.isRegularFile(filePath)) {
-                System.err.println("Указанный путь ведёт не к файлу: " + path);
-                return;
-            }
+            String path = "C:/Users/vboldyreva/Desktop/AccessLogParser/src/access.log";
+            int totalRequests = 0;
+            int yandexBotCount = 0;
+            int googleBotCount = 0;
 
-            try {
+                Path filePath = Paths.get(path);
+                if (!Files.exists(filePath)) {
+                    System.err.println("Файл не существует: " + path);
+                    return;
+                }
+                if (!Files.isRegularFile(filePath)) {
+                    System.err.println("Указанный путь ведёт не к файлу: " + path);
+                    return;
+                }
+            try  {
                 FileReader fileReader = new FileReader(filePath.toFile());
                 BufferedReader reader = new BufferedReader(fileReader);
                 String line;
-                int totalLines = 0;
-                int maxLength = 0;
-                int minLength = Integer.MAX_VALUE;
                 while ((line = reader.readLine()) != null) {
-                    totalLines++;
-                    int length = line.length();
+                    totalRequests++;
 
-                    if (length > 1024) {
-                        throw new RuntimeException("Найдена строка длиной более 1024 символов: " + length);
+                    String userAgent = extractUserAgent(line);
+                    if (userAgent == null) {
+                        continue;
                     }
-                    if (length > maxLength) {
-                        maxLength = length;
-                    }
-                    if (length < minLength) {
-                        minLength = length;
+
+                    String botName = processUserAgent(userAgent);
+                    if ("YandexBot".equals(botName)) {
+                        yandexBotCount++;
+                    } else if ("GoogleBot".equals(botName)) {
+                        googleBotCount++;
                     }
                 }
 
-                System.out.println("Общее количество строк в файле: " + totalLines);
-                System.out.println("Длина самой длинной строки в файле: " + maxLength);
-                System.out.println("Длина самой короткой строки в файле: " + minLength);
-                reader.close();
-            } catch (Exception ex) {
-               ex.printStackTrace();
+                double yandexRatio = totalRequests > 0 ? (double) yandexBotCount / totalRequests : 0.0;
+                double googleRatio = totalRequests > 0 ? (double) googleBotCount / totalRequests : 0.0;
+                System.out.printf("Доля запросов от YandexBot: %.4f%n", yandexRatio);
+                System.out.printf("Доля запросов от GoogleBot: %.4f%n", googleRatio);
+            } catch (FileNotFoundException e) {
+                System.err.println("Файл '" + filePath + "' не найден");
+            } catch (IOException e) {
+                System.err.println("Ошибка чтения файла: " + e.getMessage());
             }
-        } catch (Exception e) {
-            System.err.println("Ошибка при работе с файлом: " + e.getMessage());
-            e.printStackTrace();
+        }
+
+        private static String extractUserAgent(String logLine) {
+            int lastQuote = logLine.lastIndexOf('"');
+            if (lastQuote == -1) return null;
+            int prevQuote = logLine.lastIndexOf('"', lastQuote - 1);
+            if (prevQuote == -1) return null;
+            return logLine.substring(prevQuote + 1, lastQuote);
+        }
+
+        private static String processUserAgent(String userAgent) {
+
+            int openBracketIndex = userAgent.indexOf('(');
+            int closeBracketIndex = userAgent.indexOf(')', openBracketIndex);
+            if (openBracketIndex == -1 || closeBracketIndex == -1) {
+                return null;
+            }
+            String firstBrackets = userAgent.substring(openBracketIndex + 1, closeBracketIndex);
+
+            String[] parts = firstBrackets.split(";");
+            if (parts.length >= 2) {
+                String fragment = parts[1];
+
+                fragment = fragment.trim();
+
+                int slashIndex = fragment.indexOf('/');
+                if (slashIndex == -1) {
+                    return null;
+                }
+                String botName = fragment.substring(0, slashIndex).trim();
+
+                if ("YandexBot".equals(botName) || "GoogleBot".equals(botName)) {
+                    return botName;
+                }
+            }
+            return null;
         }
     }
-}
-
-
-
-
-
