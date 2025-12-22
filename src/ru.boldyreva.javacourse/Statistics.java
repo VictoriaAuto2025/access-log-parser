@@ -66,7 +66,6 @@ public class Statistics {
             return null;
         }
     }
-
     public static class UserAgent {
         private final String raw;
         public UserAgent(String raw) {
@@ -103,7 +102,6 @@ public class Statistics {
         public UserAgent getUserAgent() { return userAgent; }
         public int getStatusCode() { return statusCode; }
     }
-
     public static void main(String[] args) {
 
         String logFilePath = "C:/Users/vboldyreva/Desktop/AccessLogParser/src/access.log";
@@ -116,7 +114,6 @@ public class Statistics {
             System.err.println("Файл не найден: " + logFilePath);
             System.exit(1);
         }
-
         System.out.printf("Среднее число посещений за час (реальные пользователи): %.2f%n", stats.calculateAverageVisitsPerHour());
         System.out.printf("Среднее число ошибочных запросов в час: %.2f%n", stats.calculateAverageErrorRequestsPerHour());
         System.out.printf("Средняя посещаемость одним пользователем: %.2f%n", stats.calculateAverageVisitsPerUser());
