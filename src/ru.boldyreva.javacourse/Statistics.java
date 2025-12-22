@@ -1,121 +1,124 @@
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+
 public class Statistics {
-    // Поля, необходимые по заданию
-    private final Map<Long, Integer> visitsPerSecond = new HashMap<>();       // для пика в секунду
-    private final Set<String> refererDomains = new HashSet<>();               // для списка рефереров
-    private final Map<String, Integer> userVisits = new HashMap<>();          // для макс. посещаемости пользователем
+    private final Map<String, Long> visitsPerHour = new HashMap<>();
+    private final Map<String, Long> errorRequestsPerHour = new HashMap<>();
+    private long totalVisitsByRealUsers = 0;
+    private final Set<String> uniqueUserIPs = new HashSet<>();
     public void addEntry(String logLine) {
         LogEntry entry = parseLogLine(logLine);
-        if (entry == null || entry.getDateTime() == null) return;
-        // Пропускаем ботов (определяем по User-Agent)
-        if (isBot(entry.getUserAgent())) {
+        if (entry == null || entry.getDateTime() == null) {
             return;
         }
-        // 1. Считаем посещения по секундам
-        long second = entry.getDateTime().toEpochSecond(java.time.ZoneOffset.UTC);
-        visitsPerSecond.merge(second, 1, Integer::sum);
-        // 2. Сохраняем домен из Referer (если есть)
-        String referer = entry.getReferer();
-        if (referer != null && !referer.equals("-") && !referer.isEmpty()) {
-            String domain = extractDomain(referer);
-            if (domain != null) {
-                refererDomains.add(domain);
-            }
+        boolean isBot = entry.getUserAgent().isBot();
+        int statusCode = entry.getStatusCode();
+        boolean isError = (statusCode >= 400 && statusCode < 600);
+        if (!isBot) {
+            totalVisitsByRealUsers++;
+            uniqueUserIPs.add(entry.getIpAddress());
+            String hourKey = entry.getDateTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH"));
+            visitsPerHour.merge(hourKey, 1L, Long::sum);
         }
-        // 3. Считаем посещения по IP
-        userVisits.merge(entry.getIpAddress(), 1, Integer::sum);
-    }
-    // Метод 1: пиковая посещаемость в секунду
-    public int calculatePeakVisitsPerSecond() {
-        return visitsPerSecond.isEmpty() ? 0 : Collections.max(visitsPerSecond.values());
-    }
-    // Метод 2: список рефереров (доменов)
-    public Set<String> getRefererDomains() {
-        return new HashSet<>(refererDomains); // возвращаем копию
-    }
-    // Метод 3: максимальная посещаемость одним пользователем
-    public int calculateMaxVisitsPerUser() {
-        return userVisits.isEmpty() ? 0 : Collections.max(userVisits.values());
-    }
-    // Простая проверка на бота (без отдельного класса)
-    private boolean isBot(String userAgent) {
-        if (userAgent == null || userAgent.equals("-") || userAgent.isEmpty()) return true;
-        String ua = userAgent.toLowerCase();
-        return ua.contains("bot") || ua.contains("crawler") || ua.contains("spider")
-                || ua.startsWith("curl/") || ua.startsWith("wget/");
-    }
-    // Извлечение домена из URL
-    private String extractDomain(String url) {
-        try {
-            if (url.startsWith("http://")) url = url.substring(7);
-            else if (url.startsWith("https://")) url = url.substring(8);
-            int end = url.indexOf('/');
-            if (end == -1) end = url.indexOf('?');
-            if (end == -1) end = url.length();
-            String domain = url.substring(0, end).split(":")[0]; // убираем порт
-            return domain.isEmpty() ? null : domain.toLowerCase();
-        } catch (Exception e) {
-            return null;
+        if (isError) {
+            String hourKey = entry.getDateTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH"));
+            errorRequestsPerHour.merge(hourKey, 1L, Long::sum);
         }
     }
-    // Простейший парсер лога (под формат Apache)
+    public double calculateAverageVisitsPerHour() {
+        if (visitsPerHour.isEmpty()) return 0.0;
+        long total = visitsPerHour.values().stream().mapToLong(Long::longValue).sum();
+        return (double) total / visitsPerHour.size();
+    }
+    public double calculateAverageErrorRequestsPerHour() {
+        if (errorRequestsPerHour.isEmpty()) return 0.0;
+        long total = errorRequestsPerHour.values().stream().mapToLong(Long::longValue).sum();
+        return (double) total / errorRequestsPerHour.size();
+    }
+    public double calculateAverageVisitsPerUser() {
+        if (uniqueUserIPs.isEmpty()) return 0.0;
+        return (double) totalVisitsByRealUsers / uniqueUserIPs.size();
+    }
     private LogEntry parseLogLine(String line) {
-        if (line == null || line.trim().isEmpty()) return null;
+        if (line == null || line.trim().isEmpty()) {
+            return null;
+        }
         try {
-            String[] parts = line.split("\"");
-            if (parts.length < 4) return null;
-            // IP и дата — до первой кавычки
-            String preQuote = parts[0].trim();
-            String[] pre = preQuote.split("\\s+");
-            if (pre.length < 4) return null;
-            String ip = pre[0];
-            String dateStr = parts[0].substring(parts[0].indexOf('[') + 1, parts[0].indexOf(']')).split(" ")[0];
-            LocalDateTime dt = LocalDateTime.parse(dateStr, DateTimeFormatter.ofPattern("dd/MMM/yyyy:HH:mm:ss", Locale.ENGLISH));
-            int status = Integer.parseInt(parts[2].trim().split("\\s+")[0]);
-            String referer = parts.length > 3 ? parts[3].trim() : "-";
-            String userAgent = parts.length > 5 ? parts[5].trim() : "-";
-            return new LogEntry(dt, ip, status, referer, userAgent);
+            int firstSpace = line.indexOf(' ');
+            if (firstSpace == -1) return null;
+            String ip = line.substring(0, firstSpace);
+            int startBracket = line.indexOf('[');
+            int endBracket = line.indexOf(']');
+            if (startBracket == -1 || endBracket == -1) return null;
+            String datetimeStr = line.substring(startBracket + 1, endBracket).split(" ")[0];
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MMM/yyyy:HH:mm:ss", Locale.ENGLISH);
+            LocalDateTime dateTime = LocalDateTime.parse(datetimeStr, formatter);
+            String[] quotedParts = line.split("\"");
+            if (quotedParts.length < 6) return null;
+            String statusLine = quotedParts[2].trim();
+            String[] statusTokens = statusLine.split("\\s+");
+            if (statusTokens.length < 1) return null;
+            int statusCode = Integer.parseInt(statusTokens[0]);
+            String userAgentRaw = quotedParts.length >= 6 ? quotedParts[5].trim() : "";
+            return new LogEntry(dateTime, ip, userAgentRaw, statusCode);
         } catch (Exception e) {
             return null;
         }
     }
-    // Минимальный класс записи
-    private static class LogEntry {
+
+    public static class UserAgent {
+        private final String raw;
+        public UserAgent(String raw) {
+            this.raw = (raw == null) ? "" : raw.trim();
+        }
+        public boolean isBot() {
+            String s = raw.toLowerCase();
+            return s.contains("bot") ||
+                    s.contains("crawler") ||
+                    s.contains("spider") ||
+                    s.startsWith("curl/") ||
+                    s.startsWith("wget/") ||
+                    s.equals("-") ||
+                    s.isEmpty();
+        }
+        @Override
+        public String toString() {
+            return raw;
+        }
+    }
+    public static class LogEntry {
         private final LocalDateTime dateTime;
         private final String ipAddress;
+        private final UserAgent userAgent;
         private final int statusCode;
-        private final String referer;
-        private final String userAgent;
-        LogEntry(LocalDateTime dateTime, String ipAddress, int statusCode, String referer, String userAgent) {
+        public LogEntry(LocalDateTime dateTime, String ipAddress, String userAgentRaw, int statusCode) {
             this.dateTime = dateTime;
             this.ipAddress = ipAddress;
+            this.userAgent = new UserAgent(userAgentRaw);
             this.statusCode = statusCode;
-            this.referer = referer;
-            this.userAgent = userAgent;
         }
         public LocalDateTime getDateTime() { return dateTime; }
         public String getIpAddress() { return ipAddress; }
-        public String getReferer() { return referer; }
-        public String getUserAgent() { return userAgent; }
+        public UserAgent getUserAgent() { return userAgent; }
+        public int getStatusCode() { return statusCode; }
     }
-    // === MAIN с жёстко заданным путём ===
+
     public static void main(String[] args) {
-        String logFilePath = "C:/Users/vboldyreva/Desktop/AccessLogParser/src/access.log"; // ← замените на ваш путь
+
+        String logFilePath = "C:/Users/vboldyreva/Desktop/AccessLogParser/src/access.log";
         Statistics stats = new Statistics();
-        try (Scanner sc = new Scanner(new java.io.File(logFilePath))) {
-            while (sc.hasNextLine()) {
-                stats.addEntry(sc.nextLine());
+        try (Scanner scanner = new Scanner(new java.io.File(logFilePath))) {
+            while (scanner.hasNextLine()) {
+                stats.addEntry(scanner.nextLine());
             }
-        } catch (Exception e) {
-            System.err.println("Ошибка: " + e.getMessage());
-            return;
+        } catch (java.io.FileNotFoundException e) {
+            System.err.println("Файл не найден: " + logFilePath);
+            System.exit(1);
         }
-        // Вывод результатов
-        System.out.println("Пиковая посещаемость в секунду: " + stats.calculatePeakVisitsPerSecond());
-        System.out.println("Количество рефереров: " + stats.getRefererDomains().size());
-        System.out.println("Рефереры: " + stats.getRefererDomains());
-        System.out.println("Макс. посещений одним пользователем: " + stats.calculateMaxVisitsPerUser());
+
+        System.out.printf("Среднее число посещений за час (реальные пользователи): %.2f%n", stats.calculateAverageVisitsPerHour());
+        System.out.printf("Среднее число ошибочных запросов в час: %.2f%n", stats.calculateAverageErrorRequestsPerHour());
+        System.out.printf("Средняя посещаемость одним пользователем: %.2f%n", stats.calculateAverageVisitsPerUser());
     }
 }
