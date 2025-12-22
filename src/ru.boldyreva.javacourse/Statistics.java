@@ -1,100 +1,121 @@
-import java.io.*;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 public class Statistics {
-    private final Set<String> notFoundPages = new HashSet<>();
-    private final Map<String, Integer> browserCount = new HashMap<>();
-
-    public Statistics(String logFilePath) {
-        try (BufferedReader reader = new BufferedReader(new FileReader(logFilePath))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                parseLine(line);
-            }
-        } catch (IOException e) {
-            System.err.println("Ошибка: не удалось прочитать файл '" + logFilePath + "'");
-            System.err.println("Убедитесь, что файл существует и путь указан верно.");
-            System.exit(1);
+    // Поля, необходимые по заданию
+    private final Map<Long, Integer> visitsPerSecond = new HashMap<>();       // для пика в секунду
+    private final Set<String> refererDomains = new HashSet<>();               // для списка рефереров
+    private final Map<String, Integer> userVisits = new HashMap<>();          // для макс. посещаемости пользователем
+    public void addEntry(String logLine) {
+        LogEntry entry = parseLogLine(logLine);
+        if (entry == null || entry.getDateTime() == null) return;
+        // Пропускаем ботов (определяем по User-Agent)
+        if (isBot(entry.getUserAgent())) {
+            return;
         }
-    }
-
-    private void parseLine(String line) {
-        try {
-            int q1 = line.indexOf('"');
-            int q2 = line.indexOf('"', q1 + 1);
-            if (q1 == -1 || q2 == -1) return;
-            String request = line.substring(q1 + 1, q2);
-            String[] parts = request.split("\\s+");
-            if (parts.length < 2) return;
-            String page = parts[1];
-            String afterQ2 = line.substring(q2 + 1).trim();
-            String statusCode = afterQ2.split("\\s+", 2)[0];
-            int lastQ = line.lastIndexOf('"');
-            int prevQ = line.lastIndexOf('"', lastQ - 1);
-            if (prevQ == -1) return;
-            String userAgent = line.substring(prevQ + 1, lastQ).trim();
-            if ("404".equals(statusCode)) {
-                notFoundPages.add(page);
+        // 1. Считаем посещения по секундам
+        long second = entry.getDateTime().toEpochSecond(java.time.ZoneOffset.UTC);
+        visitsPerSecond.merge(second, 1, Integer::sum);
+        // 2. Сохраняем домен из Referer (если есть)
+        String referer = entry.getReferer();
+        if (referer != null && !referer.equals("-") && !referer.isEmpty()) {
+            String domain = extractDomain(referer);
+            if (domain != null) {
+                refererDomains.add(domain);
             }
-            if (isBot(userAgent)) {
-                return;
-            }
-            String browser = detectBrowser(userAgent);
-            browserCount.merge(browser, 1, Integer::sum);
-        } catch (Exception ignored) { }
+        }
+        // 3. Считаем посещения по IP
+        userVisits.merge(entry.getIpAddress(), 1, Integer::sum);
     }
+    // Метод 1: пиковая посещаемость в секунду
+    public int calculatePeakVisitsPerSecond() {
+        return visitsPerSecond.isEmpty() ? 0 : Collections.max(visitsPerSecond.values());
+    }
+    // Метод 2: список рефереров (доменов)
+    public Set<String> getRefererDomains() {
+        return new HashSet<>(refererDomains); // возвращаем копию
+    }
+    // Метод 3: максимальная посещаемость одним пользователем
+    public int calculateMaxVisitsPerUser() {
+        return userVisits.isEmpty() ? 0 : Collections.max(userVisits.values());
+    }
+    // Простая проверка на бота (без отдельного класса)
     private boolean isBot(String userAgent) {
-        if (userAgent == null || userAgent.isEmpty() || "-".equals(userAgent)) {
-            return false;
-        }
+        if (userAgent == null || userAgent.equals("-") || userAgent.isEmpty()) return true;
         String ua = userAgent.toLowerCase();
-        return ua.contains("bot") || ua.contains("spider") || ua.contains("crawl") ||
-                ua.contains("yandex") || ua.contains("google") || ua.contains("bing") ||
-                ua.contains("duckduckgo") || ua.contains("facebook") || ua.contains("whatsapp");
+        return ua.contains("bot") || ua.contains("crawler") || ua.contains("spider")
+                || ua.startsWith("curl/") || ua.startsWith("wget/");
     }
-    private String detectBrowser(String userAgent) {
-        if (userAgent == null || userAgent.isEmpty()) return "Unknown";
-        String ua = userAgent.toLowerCase();
-        if (ua.contains("edg")) return "Edge";
-        if (ua.contains("chrome") && !ua.contains("chromium")) return "Chrome";
-        if (ua.contains("firefox")) return "Firefox";
-        if (ua.contains("safari") && !ua.contains("chrome")) return "Safari";
-        if (ua.contains("opera") || ua.contains("opr/")) return "Opera";
-        if (ua.contains("msie") || ua.contains("trident")) return "Internet Explorer";
-        return "Other";
-    }
-
-    public Set<String> getNotFoundPages() {
-        return new HashSet<>(notFoundPages);
-    }
-    public Map<String, Double> getBrowserStatistics() {
-        int total = browserCount.values().stream().mapToInt(Integer::intValue).sum();
-        Map<String, Double> result = new HashMap<>();
-        if (total == 0) return result;
-        for (Map.Entry<String, Integer> entry : browserCount.entrySet()) {
-            result.put(entry.getKey(), (double) entry.getValue() / total);
+    // Извлечение домена из URL
+    private String extractDomain(String url) {
+        try {
+            if (url.startsWith("http://")) url = url.substring(7);
+            else if (url.startsWith("https://")) url = url.substring(8);
+            int end = url.indexOf('/');
+            if (end == -1) end = url.indexOf('?');
+            if (end == -1) end = url.length();
+            String domain = url.substring(0, end).split(":")[0]; // убираем порт
+            return domain.isEmpty() ? null : domain.toLowerCase();
+        } catch (Exception e) {
+            return null;
         }
-        return result;
     }
-
+    // Простейший парсер лога (под формат Apache)
+    private LogEntry parseLogLine(String line) {
+        if (line == null || line.trim().isEmpty()) return null;
+        try {
+            String[] parts = line.split("\"");
+            if (parts.length < 4) return null;
+            // IP и дата — до первой кавычки
+            String preQuote = parts[0].trim();
+            String[] pre = preQuote.split("\\s+");
+            if (pre.length < 4) return null;
+            String ip = pre[0];
+            String dateStr = parts[0].substring(parts[0].indexOf('[') + 1, parts[0].indexOf(']')).split(" ")[0];
+            LocalDateTime dt = LocalDateTime.parse(dateStr, DateTimeFormatter.ofPattern("dd/MMM/yyyy:HH:mm:ss", Locale.ENGLISH));
+            int status = Integer.parseInt(parts[2].trim().split("\\s+")[0]);
+            String referer = parts.length > 3 ? parts[3].trim() : "-";
+            String userAgent = parts.length > 5 ? parts[5].trim() : "-";
+            return new LogEntry(dt, ip, status, referer, userAgent);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+    // Минимальный класс записи
+    private static class LogEntry {
+        private final LocalDateTime dateTime;
+        private final String ipAddress;
+        private final int statusCode;
+        private final String referer;
+        private final String userAgent;
+        LogEntry(LocalDateTime dateTime, String ipAddress, int statusCode, String referer, String userAgent) {
+            this.dateTime = dateTime;
+            this.ipAddress = ipAddress;
+            this.statusCode = statusCode;
+            this.referer = referer;
+            this.userAgent = userAgent;
+        }
+        public LocalDateTime getDateTime() { return dateTime; }
+        public String getIpAddress() { return ipAddress; }
+        public String getReferer() { return referer; }
+        public String getUserAgent() { return userAgent; }
+    }
+    // === MAIN с жёстко заданным путём ===
     public static void main(String[] args) {
-               String logFile = "C:/Users/vboldyreva/Desktop/AccessLogParser/src/access.log";
-               Statistics stats = new Statistics(logFile);
-        System.out.println("=== Несуществующие страницы (404): ===");
-        if (stats.getNotFoundPages().isEmpty()) {
-            System.out.println("Нет несуществующих страниц.");
-        } else {
-            stats.getNotFoundPages().forEach(System.out::println);
+        String logFilePath = "C:/Users/vboldyreva/Desktop/AccessLogParser/src/access.log"; // ← замените на ваш путь
+        Statistics stats = new Statistics();
+        try (Scanner sc = new Scanner(new java.io.File(logFilePath))) {
+            while (sc.hasNextLine()) {
+                stats.addEntry(sc.nextLine());
+            }
+        } catch (Exception e) {
+            System.err.println("Ошибка: " + e.getMessage());
+            return;
         }
-        System.out.println("\n=== Статистика браузеров пользователей: ===");
-        Map<String, Double> browserStats = stats.getBrowserStatistics();
-        if (browserStats.isEmpty()) {
-            System.out.println("Нет данных о браузерах.");
-        } else {
-            browserStats.entrySet().stream()
-                    .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
-                    .forEach(entry ->
-                            System.out.printf("%s: %.4f%n", entry.getKey(), entry.getValue())
-                    );
-        }
+        // Вывод результатов
+        System.out.println("Пиковая посещаемость в секунду: " + stats.calculatePeakVisitsPerSecond());
+        System.out.println("Количество рефереров: " + stats.getRefererDomains().size());
+        System.out.println("Рефереры: " + stats.getRefererDomains());
+        System.out.println("Макс. посещений одним пользователем: " + stats.calculateMaxVisitsPerUser());
     }
 }
