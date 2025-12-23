@@ -1,90 +1,165 @@
-import java.io.*;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.IOException;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class JavaCourse {
-
     public static void main(String[] args) {
-
-        String path = "C:/Users/vboldyreva/Desktop/AccessLogParser/src/access.log";
-        int totalRequests = 0;
-        int yandexBotCount = 0;
-        int googleBotCount = 0;
-
-        Path filePath = Paths.get(path);
-        if (!Files.exists(filePath)) {
-            System.err.println("Файл не существует: " + path);
-            return;
-        }
-        if (!Files.isRegularFile(filePath)) {
-            System.err.println("Указанный путь ведёт не к файлу: " + path);
-            return;
-        }
-        try  {
-            FileReader fileReader = new FileReader(filePath.toFile());
-            BufferedReader reader = new BufferedReader(fileReader);
+        String logFilePath = "C:/Users/vboldyreva/Desktop/AccessLogParser/src/access.log";
+        Statistics stats = new Statistics();
+        try (BufferedReader reader = new BufferedReader(new FileReader(logFilePath))) {
             String line;
             while ((line = reader.readLine()) != null) {
-                totalRequests++;
-
-                String userAgent = extractUserAgent(line);
-                if (userAgent == null) {
+                try {
+                    LogEntry entry = new LogEntry(line);
+                    stats.addEntry(entry);
+                } catch (IllegalArgumentException e) {
+                    System.err.println("Ошибка при разборе строки: " + line);
+                    System.err.println("Причина: " + e.getMessage());
                     continue;
                 }
-
-                String botName = processUserAgent(userAgent);
-                if ("YandexBot".equals(botName)) {
-                    yandexBotCount++;
-                } else if ("GoogleBot".equals(botName)) {
-                    googleBotCount++;
-                }
             }
-
-            double yandexRatio = totalRequests > 0 ? (double) yandexBotCount / totalRequests : 0.0;
-            double googleRatio = totalRequests > 0 ? (double) googleBotCount / totalRequests : 0.0;
-            System.out.printf("Доля запросов от YandexBot: %.4f%n", yandexRatio);
-            System.out.printf("Доля запросов от GoogleBot: %.4f%n", googleRatio);
-        } catch (FileNotFoundException e) {
-            System.err.println("Файл '" + filePath + "' не найден");
         } catch (IOException e) {
-            System.err.println("Ошибка чтения файла: " + e.getMessage());
+            System.err.println("Ошибка при чтении файла: " + e.getMessage());
+            return;
         }
+        System.out.println("Обработано записей: " + stats.getEntryCount());
+        System.out.println("Средний часовой трафик: " + stats.getTrafficRate() + " байт/час");
     }
 
-    private static String extractUserAgent(String logLine) {
-        int lastQuote = logLine.lastIndexOf('"');
-        if (lastQuote == -1) return null;
-        int prevQuote = logLine.lastIndexOf('"', lastQuote - 1);
-        if (prevQuote == -1) return null;
-        return logLine.substring(prevQuote + 1, lastQuote);
+    static class LogEntry {
+        private final String ipAddr;
+        private final LocalDateTime time;
+        private final HttpMethod method;
+        private final String path;
+        private final int responseCode;
+        private final int responseSize;
+        private final String referer;
+        private final UserAgent agent;
+        public LogEntry(String logLine) {
+
+            String regex = "^(\\S+) \\S+ \\S+ \\[([^\\]]+)\\] \"([^\"]*)\" (\\d+) (\\d+) \"([^\"]*)\" \"([^\"]*)\"";
+            Pattern pattern = Pattern.compile(regex);
+            Matcher matcher = pattern.matcher(logLine);
+            if (!matcher.matches()) {
+                throw new IllegalArgumentException("Не удалось разобрать строку лога: '" + logLine + "'");
+            }
+            this.ipAddr = matcher.group(1);
+            this.time = parseDate(matcher.group(2));
+            this.responseCode = Integer.parseInt(matcher.group(4));
+            this.responseSize = Integer.parseInt(matcher.group(5));
+            this.referer = matcher.group(6);
+            this.agent = new UserAgent(matcher.group(7));
+
+            String request = matcher.group(3);
+            String[] parts = request.split(" ", 3);
+            if (parts.length < 2) {
+                throw new IllegalArgumentException("Некорректный формат запроса: '" + request + "'");
+            }
+            this.method = HttpMethod.fromString(parts[0]);
+            this.path = parts[1];
+        }
+        private LocalDateTime parseDate(String dateString) {
+            try {
+                DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MMM/yyyy:HH:mm:ss X", Locale.ENGLISH);
+                return LocalDateTime.parse(dateString, formatter);
+            } catch (Exception e) {
+                throw new IllegalArgumentException("Не удалось разобрать дату: '" + dateString + "'", e);
+            }
+        }
+
+        public String getIpAddr() { return ipAddr; }
+        public LocalDateTime getTime() { return time; }
+        public HttpMethod getMethod() { return method; }
+        public String getPath() { return path; }
+        public int getResponseCode() { return responseCode; }
+        public int getResponseSize() { return responseSize; }
+        public String getReferer() { return referer; }
+        public UserAgent getAgent() { return agent; }
     }
 
-    private static String processUserAgent(String userAgent) {
 
-        int openBracketIndex = userAgent.indexOf('(');
-        int closeBracketIndex = userAgent.indexOf(')', openBracketIndex);
-        if (openBracketIndex == -1 || closeBracketIndex == -1) {
-            return null;
-        }
-        String firstBrackets = userAgent.substring(openBracketIndex + 1, closeBracketIndex);
-
-        String[] parts = firstBrackets.split(";");
-        if (parts.length >= 2) {
-            String fragment = parts[1];
-
-            fragment = fragment.trim();
-
-            int slashIndex = fragment.indexOf('/');
-            if (slashIndex == -1) {
+    enum HttpMethod {
+        GET, POST, PUT, DELETE, HEAD, OPTIONS, PATCH;
+        public static HttpMethod fromString(String methodStr) {
+            try {
+                return valueOf(methodStr.toUpperCase());
+            } catch (IllegalArgumentException e) {
                 return null;
             }
-            String botName = fragment.substring(0, slashIndex).trim();
+        }
+    }
 
-            if ("YandexBot".equals(botName) || "GoogleBot".equals(botName)) {
-                return botName;
+    static class UserAgent {
+        private final String originalString;
+        private final String os;
+        private final String browser;
+        public UserAgent(String userAgentString) {
+            this.originalString = userAgentString;
+            this.os = extractOs(userAgentString);
+            this.browser = extractBrowser(userAgentString);
+        }
+        private String extractOs(String ua) {
+            if (ua.contains("Windows")) return "Windows";
+            if (ua.contains("Mac OS") || ua.contains("macOS")) return "macOS";
+            if (ua.contains("Linux")) return "Linux";
+            return "Unknown";
+        }
+        private String extractBrowser(String ua) {
+            if (ua.contains("Edge")) return "Edge";
+            if (ua.contains("Firefox")) return "Firefox";
+            if (ua.contains("Chrome")) return "Chrome";
+            if (ua.contains("Opera")) return "Opera";
+            if (ua.contains("Safari") && !ua.contains("Chrome")) return "Safari";
+            return "Other";
+        }
+        public String getOriginalString() {
+            return originalString;
+        }
+        public String getOs() {
+            return os;
+        }
+        public String getBrowser() {
+            return browser;
+        }
+    }
+
+    static class Statistics {
+        private int totalTraffic = 0;
+        private LocalDateTime minTime = null;
+        private LocalDateTime maxTime = null;
+        private int entryCount = 0; // Для отладки
+        public Statistics() {
+
+        }
+        public void addEntry(LogEntry entry) {
+            totalTraffic += entry.getResponseSize();
+            entryCount++;
+            LocalDateTime entryTime = entry.getTime();
+            if (minTime == null || entryTime.isBefore(minTime)) {
+                minTime = entryTime;
+            }
+            if (maxTime == null || entryTime.isAfter(maxTime)) {
+                maxTime = entryTime;
             }
         }
-        return null;
+        public double getTrafficRate() {
+            if (minTime == null || maxTime == null) {
+                return 0.0;
+            }
+            long seconds = java.time.Duration.between(minTime, maxTime).getSeconds();
+            if (seconds == 0) {
+                return 0.0;
+            }
+            double hours = seconds / 3600.0;
+            return totalTraffic / hours;
+        }
+        public int getEntryCount() {
+            return entryCount;
+        }
     }
 }
