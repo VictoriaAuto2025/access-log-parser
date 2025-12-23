@@ -82,7 +82,6 @@ public class JavaCourse {
         public UserAgent getAgent() { return agent; }
     }
 
-
     enum HttpMethod {
         GET, POST, PUT, DELETE, HEAD, OPTIONS, PATCH;
         public static HttpMethod fromString(String methodStr) {
@@ -132,7 +131,7 @@ public class JavaCourse {
         private int totalTraffic = 0;
         private LocalDateTime minTime = null;
         private LocalDateTime maxTime = null;
-        private int entryCount = 0; // Для отладки
+        private int entryCount = 0;
         public Statistics() {
 
         }
