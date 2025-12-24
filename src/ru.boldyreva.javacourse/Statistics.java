@@ -3,119 +3,120 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 public class Statistics {
-    private final Map<String, Long> visitsPerHour = new HashMap<>();
-    private final Map<String, Long> errorRequestsPerHour = new HashMap<>();
-    private long totalVisitsByRealUsers = 0;
-    private final Set<String> uniqueUserIPs = new HashSet<>();
+
+    private final Map<Long, Integer> visitsPerSecond = new HashMap<>();
+    private final Set<String> refererDomains = new HashSet<>();
+    private final Map<String, Integer> userVisits = new HashMap<>();
     public void addEntry(String logLine) {
         LogEntry entry = parseLogLine(logLine);
-        if (entry == null || entry.getDateTime() == null) {
+        if (entry == null || entry.getDateTime() == null) return;
+
+        if (isBot(entry.getUserAgent())) {
             return;
         }
-        boolean isBot = entry.getUserAgent().isBot();
-        int statusCode = entry.getStatusCode();
-        boolean isError = (statusCode >= 400 && statusCode < 600);
-        if (!isBot) {
-            totalVisitsByRealUsers++;
-            uniqueUserIPs.add(entry.getIpAddress());
-            String hourKey = entry.getDateTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH"));
-            visitsPerHour.merge(hourKey, 1L, Long::sum);
+
+        long second = entry.getDateTime().toEpochSecond(java.time.ZoneOffset.UTC);
+        visitsPerSecond.merge(second, 1, Integer::sum);
+
+        String referer = entry.getReferer();
+        if (referer != null && !referer.equals("-") && !referer.isEmpty()) {
+            String domain = extractDomain(referer);
+            if (domain != null) {
+                refererDomains.add(domain);
+            }
         }
-        if (isError) {
-            String hourKey = entry.getDateTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH"));
-            errorRequestsPerHour.merge(hourKey, 1L, Long::sum);
-        }
+
+        userVisits.merge(entry.getIpAddress(), 1, Integer::sum);
     }
-    public double calculateAverageVisitsPerHour() {
-        if (visitsPerHour.isEmpty()) return 0.0;
-        long total = visitsPerHour.values().stream().mapToLong(Long::longValue).sum();
-        return (double) total / visitsPerHour.size();
+
+    public int calculatePeakVisitsPerSecond() {
+        return visitsPerSecond.isEmpty() ? 0 : Collections.max(visitsPerSecond.values());
     }
-    public double calculateAverageErrorRequestsPerHour() {
-        if (errorRequestsPerHour.isEmpty()) return 0.0;
-        long total = errorRequestsPerHour.values().stream().mapToLong(Long::longValue).sum();
-        return (double) total / errorRequestsPerHour.size();
+
+    public Set<String> getRefererDomains() {
+        return new HashSet<>(refererDomains); // возвращаем копию
     }
-    public double calculateAverageVisitsPerUser() {
-        if (uniqueUserIPs.isEmpty()) return 0.0;
-        return (double) totalVisitsByRealUsers / uniqueUserIPs.size();
+
+    public int calculateMaxVisitsPerUser() {
+        return userVisits.isEmpty() ? 0 : Collections.max(userVisits.values());
     }
-    private LogEntry parseLogLine(String line) {
-        if (line == null || line.trim().isEmpty()) {
-            return null;
-        }
+
+    private boolean isBot(String userAgent) {
+        if (userAgent == null || userAgent.equals("-") || userAgent.isEmpty()) return true;
+        String ua = userAgent.toLowerCase();
+        return ua.contains("bot") || ua.contains("crawler") || ua.contains("spider")
+                || ua.startsWith("curl/") || ua.startsWith("wget/");
+    }
+
+    private String extractDomain(String url) {
         try {
-            int firstSpace = line.indexOf(' ');
-            if (firstSpace == -1) return null;
-            String ip = line.substring(0, firstSpace);
-            int startBracket = line.indexOf('[');
-            int endBracket = line.indexOf(']');
-            if (startBracket == -1 || endBracket == -1) return null;
-            String datetimeStr = line.substring(startBracket + 1, endBracket).split(" ")[0];
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MMM/yyyy:HH:mm:ss", Locale.ENGLISH);
-            LocalDateTime dateTime = LocalDateTime.parse(datetimeStr, formatter);
-            String[] quotedParts = line.split("\"");
-            if (quotedParts.length < 6) return null;
-            String statusLine = quotedParts[2].trim();
-            String[] statusTokens = statusLine.split("\\s+");
-            if (statusTokens.length < 1) return null;
-            int statusCode = Integer.parseInt(statusTokens[0]);
-            String userAgentRaw = quotedParts.length >= 6 ? quotedParts[5].trim() : "";
-            return new LogEntry(dateTime, ip, userAgentRaw, statusCode);
+            if (url.startsWith("http://")) url = url.substring(7);
+            else if (url.startsWith("https://")) url = url.substring(8);
+            int end = url.indexOf('/');
+            if (end == -1) end = url.indexOf('?');
+            if (end == -1) end = url.length();
+            String domain = url.substring(0, end).split(":")[0]; // убираем порт
+            return domain.isEmpty() ? null : domain.toLowerCase();
         } catch (Exception e) {
             return null;
         }
     }
-    public static class UserAgent {
-        private final String raw;
-        public UserAgent(String raw) {
-            this.raw = (raw == null) ? "" : raw.trim();
-        }
-        public boolean isBot() {
-            String s = raw.toLowerCase();
-            return s.contains("bot") ||
-                    s.contains("crawler") ||
-                    s.contains("spider") ||
-                    s.startsWith("curl/") ||
-                    s.startsWith("wget/") ||
-                    s.equals("-") ||
-                    s.isEmpty();
-        }
-        @Override
-        public String toString() {
-            return raw;
+
+    private LogEntry parseLogLine(String line) {
+        if (line == null || line.trim().isEmpty()) return null;
+        try {
+            String[] parts = line.split("\"");
+            if (parts.length < 4) return null;
+
+            String preQuote = parts[0].trim();
+            String[] pre = preQuote.split("\\s+");
+            if (pre.length < 4) return null;
+            String ip = pre[0];
+            String dateStr = parts[0].substring(parts[0].indexOf('[') + 1, parts[0].indexOf(']')).split(" ")[0];
+            LocalDateTime dt = LocalDateTime.parse(dateStr, DateTimeFormatter.ofPattern("dd/MMM/yyyy:HH:mm:ss", Locale.ENGLISH));
+            int status = Integer.parseInt(parts[2].trim().split("\\s+")[0]);
+            String referer = parts.length > 3 ? parts[3].trim() : "-";
+            String userAgent = parts.length > 5 ? parts[5].trim() : "-";
+            return new LogEntry(dt, ip, status, referer, userAgent);
+        } catch (Exception e) {
+            return null;
         }
     }
-    public static class LogEntry {
+
+    private static class LogEntry {
         private final LocalDateTime dateTime;
         private final String ipAddress;
-        private final UserAgent userAgent;
         private final int statusCode;
-        public LogEntry(LocalDateTime dateTime, String ipAddress, String userAgentRaw, int statusCode) {
+        private final String referer;
+        private final String userAgent;
+        LogEntry(LocalDateTime dateTime, String ipAddress, int statusCode, String referer, String userAgent) {
             this.dateTime = dateTime;
             this.ipAddress = ipAddress;
-            this.userAgent = new UserAgent(userAgentRaw);
             this.statusCode = statusCode;
+            this.referer = referer;
+            this.userAgent = userAgent;
         }
         public LocalDateTime getDateTime() { return dateTime; }
         public String getIpAddress() { return ipAddress; }
-        public UserAgent getUserAgent() { return userAgent; }
-        public int getStatusCode() { return statusCode; }
+        public String getReferer() { return referer; }
+        public String getUserAgent() { return userAgent; }
     }
-    public static void main(String[] args) {
 
+    public static void main(String[] args) {
         String logFilePath = "C:/Users/vboldyreva/Desktop/AccessLogParser/src/access.log";
         Statistics stats = new Statistics();
-        try (Scanner scanner = new Scanner(new java.io.File(logFilePath))) {
-            while (scanner.hasNextLine()) {
-                stats.addEntry(scanner.nextLine());
+        try (Scanner sc = new Scanner(new java.io.File(logFilePath))) {
+            while (sc.hasNextLine()) {
+                stats.addEntry(sc.nextLine());
             }
-        } catch (java.io.FileNotFoundException e) {
-            System.err.println("Файл не найден: " + logFilePath);
-            System.exit(1);
+        } catch (Exception e) {
+            System.err.println("Ошибка: " + e.getMessage());
+            return;
         }
-        System.out.printf("Среднее число посещений за час (реальные пользователи): %.2f%n", stats.calculateAverageVisitsPerHour());
-        System.out.printf("Среднее число ошибочных запросов в час: %.2f%n", stats.calculateAverageErrorRequestsPerHour());
-        System.out.printf("Средняя посещаемость одним пользователем: %.2f%n", stats.calculateAverageVisitsPerUser());
+
+        System.out.println("Пиковая посещаемость в секунду: " + stats.calculatePeakVisitsPerSecond());
+        System.out.println("Количество рефереров: " + stats.getRefererDomains().size());
+        System.out.println("Рефереры: " + stats.getRefererDomains());
+        System.out.println("Макс. посещений одним пользователем: " + stats.calculateMaxVisitsPerUser());
     }
 }
